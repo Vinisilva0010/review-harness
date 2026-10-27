@@ -1,0 +1,4 @@
+{
+  "candidates": [{"content": {"role": "model", "parts": [{"text": "{\"findings\":"}, {"text": "[]}"}]}, "finishReason": "STOP", "index": 0}],
+  "usageMetadata": {"promptTokenCount": 120, "candidatesTokenCount": 8, "totalTokenCount": 128}
+}

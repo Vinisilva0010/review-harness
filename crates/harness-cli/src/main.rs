@@ -10,6 +10,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 use harness_core::config::{Config, RiskLevel, CONFIG_FILE, DEFAULT_CONFIG_TOML};
 use harness_core::diff::{self, Diff, MAX_DIFF_BYTES};
+use harness_core::review::{self, ReviewEngine, ReviewInput, ReviewState, ReviewStatus};
 use harness_core::risk::Classifier;
 use harness_core::security::{self, SecurityVerdict, Tools};
 use harness_core::verify::{self, Check, Limits, Verdict};
@@ -64,6 +65,20 @@ enum Command {
         base: Option<String>,
         #[arg(long, default_value = "HEAD")]
         head: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run the advisory AI review (skipped without a configured provider).
+    ///
+    /// Exit codes: 0 completed/skipped, 1 changes requested, 4 failed or over budget.
+    Review {
+        #[command(flatten)]
+        common: Common,
+        #[command(flatten)]
+        source: DiffSource,
+        /// JSON file holding rounds/tokens/last reviewed commit; read and rewritten.
+        #[arg(long)]
+        state_file: Option<PathBuf>,
         #[arg(long)]
         json: bool,
     },
@@ -160,6 +175,21 @@ impl From<Level> for RiskLevel {
     }
 }
 
+fn git_rev_parse(dir: &Path, rev: &str) -> Result<String> {
+    if rev.starts_with('-') {
+        bail!("invalid ref {rev:?}");
+    }
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "--verify", "--end-of-options", rev])
+        .current_dir(dir)
+        .output()
+        .context("running git rev-parse")?;
+    if !out.status.success() {
+        bail!("cannot resolve ref {rev:?}");
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
 fn parse_check(raw: &str) -> Result<Check> {
     match raw.split_once('=') {
         Some((name, command)) if !name.trim().is_empty() && !command.trim().is_empty() => {
@@ -247,6 +277,65 @@ fn run() -> Result<ExitCode> {
                 SecurityVerdict::Clean => ExitCode::SUCCESS,
                 SecurityVerdict::Findings => ExitCode::from(1),
                 SecurityVerdict::Incomplete => ExitCode::from(3),
+            })
+        }
+        Command::Review {
+            common,
+            source,
+            state_file,
+            json,
+        } => {
+            let config = common.load_config()?;
+            let diff = source.load(&common.dir)?;
+            let risk = Classifier::new(&config.risk)?.classify(&diff).overall;
+            let state: ReviewState = match &state_file {
+                Some(p) if p.exists() => serde_json::from_str(&std::fs::read_to_string(p)?)
+                    .with_context(|| format!("parsing state file {}", p.display()))?,
+                _ => ReviewState::default(),
+            };
+            let git_head = source
+                .base
+                .as_ref()
+                .map(|_| git_rev_parse(&common.dir, &source.head));
+            let head_commit = git_head.transpose()?;
+            // Rounds after the first only look at what changed since the last review.
+            let incremental = match (&state.last_reviewed_commit, &head_commit) {
+                (Some(last), Some(head)) if state.rounds_done > 0 => {
+                    // After a force-push the old commit may be unreachable: review everything.
+                    diff::git_diff(
+                        &common.dir,
+                        last,
+                        head,
+                        MAX_DIFF_BYTES,
+                        Duration::from_secs(60),
+                    )
+                    .ok()
+                    .map(|t| Diff::parse(&t))
+                }
+                _ => None,
+            };
+            let slot = review::build_default_provider(&config.review, &|k| std::env::var(k).ok())
+                .map_err(|e| anyhow::anyhow!("provider setup: {e}"))?;
+            let report = ReviewEngine::new(config.review.clone(), slot).review(ReviewInput {
+                diff: &diff,
+                incremental: incremental.as_ref(),
+                risk,
+                head_commit,
+                state,
+            });
+            if let Some(p) = &state_file {
+                std::fs::write(p, serde_json::to_string_pretty(&report.state)?)
+                    .with_context(|| format!("writing state file {}", p.display()))?;
+            }
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("{}", report.to_markdown());
+            }
+            Ok(match report.status {
+                ReviewStatus::Failed { .. } | ReviewStatus::OverBudget { .. } => ExitCode::from(4),
+                _ if report.requests_changes => ExitCode::from(1),
+                _ => ExitCode::SUCCESS,
             })
         }
         Command::Init { common, force } => {

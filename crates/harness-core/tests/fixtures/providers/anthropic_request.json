@@ -1,0 +1,6 @@
+{
+  "model": "test-model",
+  "max_tokens": 512,
+  "system": "SYS",
+  "messages": [{"role": "user", "content": "USER"}]
+}

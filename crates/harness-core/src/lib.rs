@@ -3,6 +3,7 @@
 
 pub mod config;
 pub mod diff;
+pub mod review;
 pub mod risk;
 pub mod security;
 pub mod verify;
