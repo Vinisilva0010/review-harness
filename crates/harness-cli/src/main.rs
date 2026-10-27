@@ -10,6 +10,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 use harness_core::config::{Config, RiskLevel, CONFIG_FILE, DEFAULT_CONFIG_TOML};
 use harness_core::diff::{self, Diff, MAX_DIFF_BYTES};
+use harness_core::pipeline::{self, PipelineInput};
 use harness_core::review::{self, ReviewEngine, ReviewInput, ReviewState, ReviewStatus};
 use harness_core::risk::Classifier;
 use harness_core::security::{self, SecurityVerdict, Tools};
@@ -65,6 +66,27 @@ enum Command {
         base: Option<String>,
         #[arg(long, default_value = "HEAD")]
         head: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run every layer (classify, verify, security, AI review) and apply the gate.
+    ///
+    /// Exit codes: 0 pass, 1 fail, 3 needs human review, 2 error.
+    Run {
+        #[command(flatten)]
+        common: Common,
+        #[command(flatten)]
+        source: DiffSource,
+        /// JSON file holding AI review rounds/tokens; read and rewritten.
+        #[arg(long)]
+        state_file: Option<PathBuf>,
+        /// Directory to write the JSON run record into.
+        #[arg(long)]
+        record_dir: Option<PathBuf>,
+        /// Also write the Markdown PR comment to this file.
+        #[arg(long)]
+        comment_file: Option<PathBuf>,
+        /// Print the JSON run record instead of Markdown.
         #[arg(long)]
         json: bool,
     },
@@ -173,6 +195,53 @@ impl From<Level> for RiskLevel {
             Level::High => RiskLevel::High,
         }
     }
+}
+
+struct ReviewContext {
+    diff: Diff,
+    state: ReviewState,
+    head_commit: Option<String>,
+    incremental: Option<Diff>,
+}
+
+fn review_context(
+    common: &Common,
+    source: &DiffSource,
+    state_file: Option<&Path>,
+) -> Result<ReviewContext> {
+    let diff = source.load(&common.dir)?;
+    let state: ReviewState = match state_file {
+        Some(p) if p.exists() => serde_json::from_str(&std::fs::read_to_string(p)?)
+            .with_context(|| format!("parsing state file {}", p.display()))?,
+        _ => ReviewState::default(),
+    };
+    let head_commit = source
+        .base
+        .as_ref()
+        .map(|_| git_rev_parse(&common.dir, &source.head))
+        .transpose()?;
+    // Rounds after the first only look at what changed since the last review.
+    let incremental = match (&state.last_reviewed_commit, &head_commit) {
+        (Some(last), Some(head)) if state.rounds_done > 0 => {
+            // After a force-push the old commit may be unreachable: review everything.
+            diff::git_diff(
+                &common.dir,
+                last,
+                head,
+                MAX_DIFF_BYTES,
+                Duration::from_secs(60),
+            )
+            .ok()
+            .map(|t| Diff::parse(&t))
+        }
+        _ => None,
+    };
+    Ok(ReviewContext {
+        diff,
+        state,
+        head_commit,
+        incremental,
+    })
 }
 
 fn git_rev_parse(dir: &Path, rev: &str) -> Result<String> {
@@ -286,42 +355,16 @@ fn run() -> Result<ExitCode> {
             json,
         } => {
             let config = common.load_config()?;
-            let diff = source.load(&common.dir)?;
-            let risk = Classifier::new(&config.risk)?.classify(&diff).overall;
-            let state: ReviewState = match &state_file {
-                Some(p) if p.exists() => serde_json::from_str(&std::fs::read_to_string(p)?)
-                    .with_context(|| format!("parsing state file {}", p.display()))?,
-                _ => ReviewState::default(),
-            };
-            let git_head = source
-                .base
-                .as_ref()
-                .map(|_| git_rev_parse(&common.dir, &source.head));
-            let head_commit = git_head.transpose()?;
-            // Rounds after the first only look at what changed since the last review.
-            let incremental = match (&state.last_reviewed_commit, &head_commit) {
-                (Some(last), Some(head)) if state.rounds_done > 0 => {
-                    // After a force-push the old commit may be unreachable: review everything.
-                    diff::git_diff(
-                        &common.dir,
-                        last,
-                        head,
-                        MAX_DIFF_BYTES,
-                        Duration::from_secs(60),
-                    )
-                    .ok()
-                    .map(|t| Diff::parse(&t))
-                }
-                _ => None,
-            };
+            let ctx = review_context(&common, &source, state_file.as_deref())?;
+            let risk = Classifier::new(&config.risk)?.classify(&ctx.diff).overall;
             let slot = review::build_default_provider(&config.review, &|k| std::env::var(k).ok())
                 .map_err(|e| anyhow::anyhow!("provider setup: {e}"))?;
             let report = ReviewEngine::new(config.review.clone(), slot).review(ReviewInput {
-                diff: &diff,
-                incremental: incremental.as_ref(),
+                diff: &ctx.diff,
+                incremental: ctx.incremental.as_ref(),
                 risk,
-                head_commit,
-                state,
+                head_commit: ctx.head_commit,
+                state: ctx.state,
             });
             if let Some(p) = &state_file {
                 std::fs::write(p, serde_json::to_string_pretty(&report.state)?)
@@ -337,6 +380,56 @@ fn run() -> Result<ExitCode> {
                 _ if report.requests_changes => ExitCode::from(1),
                 _ => ExitCode::SUCCESS,
             })
+        }
+        Command::Run {
+            common,
+            source,
+            state_file,
+            record_dir,
+            comment_file,
+            json,
+        } => {
+            let config = common.load_config()?;
+            let ctx = review_context(&common, &source, state_file.as_deref())?;
+            let provider =
+                review::build_default_provider(&config.review, &|k| std::env::var(k).ok())
+                    .map_err(|e| anyhow::anyhow!("provider setup: {e}"))?;
+            let record = pipeline::run(PipelineInput {
+                config: &config,
+                dir: &common.dir,
+                diff: &ctx.diff,
+                incremental: ctx.incremental.as_ref(),
+                base: source.base.clone(),
+                head: ctx.head_commit.clone(),
+                state: ctx.state,
+                provider,
+                tools: Tools::default(),
+            })
+            .map_err(|e| anyhow::anyhow!(e))?;
+            if let Some(p) = &state_file {
+                std::fs::write(p, serde_json::to_string_pretty(&record.review.state)?)
+                    .with_context(|| format!("writing state file {}", p.display()))?;
+            }
+            if let Some(dir) = &record_dir {
+                std::fs::create_dir_all(dir)?;
+                let tag = record.head.as_deref().unwrap_or("nohead");
+                let name = format!(
+                    "{}-{}.json",
+                    record.generated_at_unix,
+                    &tag[..tag.len().min(12)]
+                );
+                std::fs::write(dir.join(name), record.to_json()?)?;
+            }
+            if let Some(p) = &comment_file {
+                std::fs::write(p, record.to_markdown())
+                    .with_context(|| format!("writing {}", p.display()))?;
+            }
+            if json {
+                println!("{}", record.to_json()?);
+            } else {
+                println!("{}", record.to_markdown());
+            }
+            Ok(ExitCode::from(record.gate.decision.exit_code()))
         }
         Command::Init { common, force } => {
             let path = common

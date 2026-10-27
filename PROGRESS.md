@@ -64,3 +64,24 @@ test result: ok. 112 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fi
 test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 ```
+
+## Phase 5: gate, reports, run command, GitHub Action - done (branch `phase/5-gate-action`)
+Local end-to-end dogfood: `review-harness run --base phase/4-ai-review --head HEAD` against this repo
+ran fmt/clippy/test as evidence (all Passed), cargo-audit Passed, gitleaks Skipped (not installed locally),
+so the honest decision was NEEDS HUMAN REVIEW (exit 3). The workflow itself can only be exercised on GitHub (see BLOCKERS.md).
+```
+$ cargo fmt --all --check
+(ok)
+$ cargo clippy --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.78s
+$ cargo test --all
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+test result: ok. 129 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```

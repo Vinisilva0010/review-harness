@@ -1,0 +1,18 @@
+# review-harness dogfood configuration (read from the BASE commit in CI).
+[risk]
+# Defaults, plus: the review rules themselves are high risk.
+high = [".github/workflows/**", "**/action.yml", "**/Dockerfile*", "**/migrations/**", "**/*auth*/**", "**/*crypto*/**", "**/*secret*", "**/.env*", ".review-harness.toml", ".github/CODEOWNERS", "SECURITY.md"]
+
+[verify]
+timeout_secs = 900
+checks = [
+  { name = "fmt", command = "cargo fmt --all --check" },
+  { name = "clippy", command = "cargo clippy --all-targets -- -D warnings" },
+  { name = "test", command = "cargo test --all" },
+]
+
+[review]
+# Left at "none" so the repository works with no secrets. To enable the AI layer set
+#   provider = "gemini", model = "<model id>", api_key_env = "GEMINI_API_KEY"
+# and add the GEMINI_API_KEY repository secret.
+provider = "none"
