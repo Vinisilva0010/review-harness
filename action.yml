@@ -94,6 +94,7 @@ runs:
         else
           : > "$out/config.toml"
         fi
+        code=0
         review-harness run \
           --base "$BASE_SHA" --head "$HEAD_SHA" \
           --config "$out/config.toml" \
@@ -101,8 +102,7 @@ runs:
           --record-dir "$out/records" \
           --comment-file "$out/comment.md" \
           ${PR_NUMBER:+--pr-number "$PR_NUMBER"} \
-          > "$out/stdout.md"
-        code=$?
+          > "$out/stdout.md" || code=$?
         case "$code" in
           0) decision=pass ;;
           1) decision=fail ;;
