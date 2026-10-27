@@ -1,188 +1,135 @@
 # review-harness
 
-A layered, risk-based code review pipeline for pull requests, as a Rust CLI and a GitHub Action.
+Automatic review for pull requests. It checks every PR before it can be merged and gives one of three results:
 
-The question it asks is not "did a human read this code?" but **"what could go wrong with this
-change, and which check, automated or human, is the right one to catch it?"** (the framing from
-Anthropic's post on how the Claude Code team does code review).
-
-Its differentiator is cost. Cheap, deterministic layers run first. An LLM reviews a change only when
-its risk justifies the spend, under a hard token budget. With **no LLM provider configured the tool
-works fully**: the AI layer is skipped with a clear notice. Companies can bring their own key.
-
-![status](https://img.shields.io/badge/license-MIT-blue)
-
-## How it works
-
-```mermaid
-flowchart TD
-    PR[Pull request diff] --> C[1. Classify risk<br/>globs + signals, zero tokens]
-    PR --> V[2. Verify<br/>fmt, clippy, tests: evidence]
-    PR --> S[3. Security scanners<br/>cargo-audit, gitleaks]
-    C --> R{Risk >= threshold<br/>and provider configured<br/>and layers 2-3 not failed?}
-    V --> R
-    S --> R
-    R -- yes --> A[4. AI review<br/>diff hunks only, token budget,<br/>max 3 rounds, strict JSON,<br/>validator drops hallucinations]
-    R -- no --> N[AI layer: skipped, with the reason]
-    A --> G
-    N --> G
-    V --> G
-    S --> G
-    C --> G
-    G{{5. Gate}} --> P[pass]
-    G --> H[needs human]
-    G --> F[fail]
-    G --> REP[PR comment + JSON run record]
-    REP --> M[metrics: rounds, findings,<br/>hallucination rate, tokens, reverts]
-    M --> L[learn: bug escaped?<br/>rule in REVIEW.md + test stub]
-    L -. feeds .-> A
-```
-
-### Why each layer exists
-
-| Layer | What it answers | Cost | Why it is there |
-|---|---|---|---|
-| **classify** | How risky is this change? | zero tokens | Decides how much scrutiny to spend. Docs are low, CI files and auth code are high, secrets-like lines force high. |
-| **verify** | Is there passing evidence? | CPU only | "Done" without a green run of your own checks is impossible by design: no checks configured means *no evidence*, never a pass. |
-| **security** | Known-vulnerable deps? Leaked secrets? | CPU only | Deterministic scanners beat a model at these. A missing scanner is reported as *skipped*, never as passed. |
-| **AI review** | What might a careful reviewer flag? | tokens, budgeted | Catches logic bugs scanners cannot. Advisory only: it can request changes, never approve. |
-| **gate** | Merge, ask a human, or stop? | zero | One auditable decision table. High risk always needs a human. |
-| **metrics / learn** | Is review working? What escaped? | zero | Closes the loop: measure, then turn escaped bugs into rules and tests. |
-
-## Quickstart
-
-```bash
-cargo install --path crates/harness-cli      # installs `review-harness`
-cd your-repo
-review-harness init                           # writes a commented .review-harness.toml
-review-harness classify --base origin/main    # risk of this branch
-review-harness run --base origin/main         # all layers + gate
-echo "exit code: $?"                          # 0 pass, 1 fail, 3 needs human, 2 error
-```
-
-### Commands
-
-| Command | Purpose | Exit codes |
+| Result | Meaning | What you do |
 |---|---|---|
-| `init` | Write the default `.review-harness.toml` | 0 / 2 |
-| `classify` | Risk report from `--base/--head` or `--diff-file` (`-` for stdin) | 0 (1 with `--fail-on <level>`) |
-| `verify` | Run configured (or `--check name=cmd`) commands, print evidence | 0 verified, 1 failed or no evidence |
-| `security` | Run cargo-audit and gitleaks | 0 clean, 1 findings, 3 incomplete |
-| `review` | Advisory AI review only | 0, 1 changes requested, 4 failed or over budget |
-| `run` | Everything, then the gate | 0 pass, 1 fail, 3 needs human, 2 error |
-| `metrics` | Aggregate run records (`--records dir`, optional `--git-limit N`) | 0 |
-| `learn` | Record a rule in `REVIEW.md` and scaffold a regression test | 0 / 2 |
+| **Pass** | Tests passed, no security problems, only low-risk files changed | Merge it |
+| **Needs human** | Everything passed, but the PR touches sensitive files | Read it carefully before merging |
+| **Fail** | Tests failed or a security problem was found | Fix it. Merging stays blocked |
 
-`run` accepts `--state-file` (review rounds and tokens persist between pushes), `--record-dir`
-(JSON run record), `--comment-file` (the Markdown PR comment) and `--pr-number`.
+## Why
 
-## GitHub Action
+AI coding agents write more code than a person can read line by line. Reading everything does not scale. Reading nothing is unsafe.
+
+This tool checks every PR automatically, so your attention goes only to the PRs that need it.
+
+It is based on the process described in "How the Claude Code team does code review" (Anthropic, October 2026), adapted for a small budget: free checks run first, and AI is used only where the risk justifies the cost.
+
+## What it checks, in order
+
+1. **Tests.** Runs the test commands you configure. Without passing tests, a PR never gets "Pass".
+2. **Risk.** Looks at which files changed. You list the sensitive paths of your project (login, payments, CI config, secrets). A PR that touches them gets "Needs human".
+3. **Security.** Runs gitleaks (finds leaked keys and passwords) and cargo-audit (finds dependencies with known vulnerabilities).
+4. **AI review (optional, off by default).** Reads only the changed lines of medium- and high-risk PRs, with a token limit and at most 3 rounds per PR. If the AI points to a line that is not in the PR, the finding is discarded. The AI can report problems. It can never approve a PR.
+5. **Decision.** Posts one comment on the PR with the result of each step.
+
+## Use it in your repository
+
+Three steps.
+
+### 1. Add the workflow
+
+Create `.github/workflows/review-harness.yml`. This file is the same in every project:
 
 ```yaml
-# .github/workflows/review-harness.yml  (this repo dogfoods exactly this)
+name: review-harness
+
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+
 permissions:
   contents: read
   pull-requests: write
+
 jobs:
   review:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with: { fetch-depth: 0, persist-credentials: false }
-      - uses: ./            # or Vinisilva0010/review-harness@<full commit sha>
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: Vinisilva0010/review-harness@main
         with:
           base-sha: ${{ github.event.pull_request.base.sha }}
           head-sha: ${{ github.event.pull_request.head.sha }}
           pr-number: ${{ github.event.pull_request.number }}
 ```
 
-The Action builds the CLI from source, reads `.review-harness.toml` and `REVIEW.md` from the **base**
-commit (a PR cannot change its own rules), posts or updates a single PR comment, and writes the report
-to the job summary. With no secret configured the comment shows *AI review skipped: no provider
-configured*. Required human review is enforced by branch protection:
-see [docs/BRANCH_PROTECTION.md](docs/BRANCH_PROTECTION.md).
+The tool can only read the code and comment on the PR. It cannot change anything in your repository.
 
-## Configuration reference (`.review-harness.toml`)
+### 2. Add the config
 
-Every key is optional. Unknown keys are rejected.
+Create `.review-harness.toml` in the root of your project. This file changes per project:
 
 ```toml
-[risk]
-high   = [".github/workflows/**", "**/action.yml", "**/Dockerfile*", "**/migrations/**",
-          "**/*auth*/**", "**/*crypto*/**", "**/*secret*", "**/.env*"]
-medium = ["**/*.rs", "**/*.py", "**/*.ts", "**/*.js", "**/*.go", "**/*.java", "**/*.sh"]
-low    = ["**/*.md", "docs/**", "**/*.txt", "LICENSE"]
-large_file_lines  = 300     # one file changing this much is at least medium
-huge_change_lines = 1500    # a PR changing this much is high
-
 [verify]
-timeout_secs = 600
-checks = [{ name = "test", command = "cargo test --all" }]
+checks = [
+  { name = "test", command = "cargo test --all" },
+]
 
-[security]
-cargo_audit = true
-gitleaks    = true
-timeout_secs = 300
+[risk]
+high = [".github/workflows/**", "**/*auth*/**", "**/.env*"]
 
 [review]
-provider = "none"           # none | gemini | openai_compatible | anthropic
-# model = "..."
-# base_url = "https://api.groq.com/openai/v1"   # required for openai_compatible
-# api_key_env = "GROQ_API_KEY"                   # the NAME of an env var, never the key
-min_risk     = "medium"     # AI review runs at or above this risk
-token_budget = 30000        # hard cap on estimated tokens per PR (all rounds)
-max_rounds   = 3
+provider = "none"
 ```
 
-Path precedence is high, then medium, then low. A file that matches no rule is treated as medium
-(unknown is not safe). Signals (CI files, dependency manifests, binaries, large files, secret-like
-added lines) can only raise a file's level.
+- `[verify]`: the command that runs your tests (`cargo test`, `npm test`, `pytest`...).
+- `[risk]`: the sensitive files and folders of your project.
+- `[review]`: the AI review. `"none"` means off.
 
-## Cost model
+The config is always read from the main branch, not from the PR. A PR cannot change its own rules.
 
-* Layers 1 to 3 and the gate cost no tokens.
-* The AI layer is skipped when: no provider is configured, the API key variable is unset, risk is
-  below `min_risk`, there is nothing to review, or a deterministic layer already failed.
-* When it runs it sends **only the diff hunks of changed files** plus your `REVIEW.md` rules, never
-  the repository. Input size is estimated as `bytes / 3` and checked **before** sending against
-  `token_budget`, which is cumulative across rounds and includes the JSON retry. Over budget means the
-  call is refused and a human is asked; nothing is silently truncated.
-* Rounds after the first review only the lines changed since the last reviewed commit, and a PR gets at
-  most 3 rounds, after which the tool says to step back and rethink the approach.
-* Worst case per PR is bounded: `token_budget` input tokens plus at most `max_rounds x 2` calls of 2048
-  output tokens. Real usage reported by the provider replaces the estimate in the accounting.
+### 3. Protect the main branch
 
-## Bring your own key
+In GitHub: **Settings → Rules → Rulesets → New branch ruleset**. Target the default branch and turn on:
 
-Keys come from environment variables only. Put the variable *name* in the config and the value in your
-shell or CI secrets:
+- **Require a pull request before merging**
+- **Require status checks to pass**, adding the `review` check and your test checks
+- **Block force pushes**
+- **Restrict deletions**
+
+Without this step, anyone, including an AI agent, could push straight to main and skip the review.
+
+## Turn on the AI review (optional)
+
+1. Add your API key as a repository secret: **Settings → Secrets and variables → Actions → New repository secret**, named `GEMINI_API_KEY`.
+2. Pass it to the review step in the workflow:
+
+```yaml
+      - uses: Vinisilva0010/review-harness@main
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+```
+
+3. In `.review-harness.toml`:
 
 ```toml
 [review]
-provider    = "gemini"            # or anthropic, or openai_compatible (Groq, etc.)
-model       = "<model id>"
+provider = "gemini"
+model = "<model id>"
 api_key_env = "GEMINI_API_KEY"
 ```
 
-`.env.example` lists the variable names. The tool never reads `.env` files. See [SECURITY.md](SECURITY.md).
+Anthropic and OpenAI-compatible APIs (such as Groq) are also supported. The key is read only from an environment variable and is never written to logs. PRs opened from forks never receive the key.
 
-## Development
+## Run it on your machine (optional)
 
 ```bash
-cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --all
-cargo audit
+cargo install --git https://github.com/Vinisilva0010/review-harness harness-cli --locked
+review-harness init     # writes a starter .review-harness.toml
+review-harness --help   # lists all commands
 ```
 
-No test reaches the external network or a real LLM (a few provider-transport tests talk to a throwaway loopback server on 127.0.0.1): providers are tested with `MockProvider`, a fake HTTP
-transport and recorded JSON fixtures (`crates/harness-core/tests/fixtures/`).
+Requires Rust 1.98.1 or newer. Not needed for the GitHub setup above.
 
-More: [ARCHITECTURE.md](ARCHITECTURE.md), [SECURITY.md](SECURITY.md), [DECISIONS.md](DECISIONS.md),
-[examples/](examples/), [docs/GUIA-PT.md](docs/GUIA-PT.md) (Portuguese walkthrough),
-[docs/PITCH.md](docs/PITCH.md).
+## More
 
-## License
+- [ARCHITECTURE.md](ARCHITECTURE.md): how it is built and why
+- [SECURITY.md](SECURITY.md): threat model
+- [docs/GUIA-PT.md](docs/GUIA-PT.md): guide in Portuguese
 
-MIT
+License: MIT
