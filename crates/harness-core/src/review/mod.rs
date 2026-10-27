@@ -101,6 +101,8 @@ pub enum SkipReason {
         min_risk: RiskLevel,
     },
     NoReviewableChanges,
+    /// A deterministic layer already failed; spending tokens would not change the outcome.
+    EarlierLayerFailed,
 }
 
 impl SkipReason {
@@ -114,6 +116,9 @@ impl SkipReason {
                 format!("skipped: risk {risk} is below the review threshold {min_risk}")
             }
             Self::NoReviewableChanges => "skipped: no added lines to review".into(),
+            Self::EarlierLayerFailed => {
+                "skipped: a deterministic layer already failed (no tokens spent)".into()
+            }
         }
     }
 }
@@ -165,6 +170,21 @@ pub struct ReviewReport {
 }
 
 impl ReviewReport {
+    /// A report for a layer that did not run.
+    pub fn skipped(reason: SkipReason, state: ReviewState) -> Self {
+        Self {
+            status: ReviewStatus::Skipped {
+                reason: reason.clone(),
+            },
+            round: state.rounds_done,
+            findings: Vec::new(),
+            requests_changes: false,
+            notices: vec![format!("AI review {}", reason.describe())],
+            metrics: ReviewMetrics::default(),
+            state,
+        }
+    }
+
     pub fn to_markdown(&self) -> String {
         let mut out = String::from("### AI review (advisory)\n\n");
         match &self.status {
