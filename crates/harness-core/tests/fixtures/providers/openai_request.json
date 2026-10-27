@@ -1,0 +1,7 @@
+{
+  "model": "test-model",
+  "messages": [{"role": "system", "content": "SYS"}, {"role": "user", "content": "USER"}],
+  "response_format": {"type": "json_object"},
+  "max_completion_tokens": 512,
+  "temperature": 0
+}

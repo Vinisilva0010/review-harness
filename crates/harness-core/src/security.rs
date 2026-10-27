@@ -139,27 +139,47 @@ struct Output {
     stderr: String,
 }
 
+/// `spawn` can fail with ETXTBSY ("text file busy") when another thread is forking
+/// while a freshly written executable still has an open write handle. It is transient.
+fn spawn_retrying(
+    mut spawn: impl FnMut() -> std::io::Result<std::process::Child>,
+) -> std::io::Result<std::process::Child> {
+    const ETXTBSY: i32 = 26;
+    let mut attempts = 0;
+    loop {
+        match spawn() {
+            Err(e) if e.raw_os_error() == Some(ETXTBSY) && attempts < 20 => {
+                attempts += 1;
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            other => return other,
+        }
+    }
+}
+
 fn run_capped(
     program: &str,
     args: &[&str],
     cwd: &Path,
     timeout: Duration,
 ) -> Result<Output, RunError> {
-    let mut child = Command::new(program)
-        .args(args)
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0)
-        .spawn()
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                RunError::NotFound
-            } else {
-                RunError::Other(e.to_string())
-            }
-        })?;
+    let mut child = spawn_retrying(|| {
+        Command::new(program)
+            .args(args)
+            .current_dir(cwd)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .process_group(0)
+            .spawn()
+    })
+    .map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            RunError::NotFound
+        } else {
+            RunError::Other(e.to_string())
+        }
+    })?;
     let out = child.stdout.take().expect("piped");
     let err = child.stderr.take().expect("piped");
     let out_t = std::thread::spawn(move || {

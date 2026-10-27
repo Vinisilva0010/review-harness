@@ -1,0 +1,10 @@
+# Every change needs the owner; the paths below are called out explicitly because they
+# define what gets reviewed and how (see docs/BRANCH_PROTECTION.md).
+*                              @Vinisilva0010
+/.github/                      @Vinisilva0010
+/action.yml                    @Vinisilva0010
+/.review-harness.toml          @Vinisilva0010
+/SECURITY.md                   @Vinisilva0010
+/crates/harness-core/src/gate.rs     @Vinisilva0010
+/crates/harness-core/src/security.rs @Vinisilva0010
+/crates/harness-core/src/review/     @Vinisilva0010
