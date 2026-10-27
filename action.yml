@@ -1,0 +1,136 @@
+name: review-harness
+description: Layered, risk-based pull request review (verify, risk, security scanners, advisory AI review) with a pass / needs-human / fail gate.
+author: Vinicius
+
+inputs:
+  base-sha:
+    description: Base commit of the pull request.
+    required: true
+  head-sha:
+    description: Head commit of the pull request.
+    required: true
+  config-ref:
+    description: >
+      Git ref the trusted .review-harness.toml is read from. Defaults to the base commit so a
+      pull request cannot change its own review rules or the commands that are executed.
+    required: false
+    default: ""
+  fail-on-needs-human:
+    description: Exit non-zero when the decision is needs-human (otherwise only a warning is raised and branch protection requires the human review).
+    required: false
+    default: "false"
+  install-gitleaks:
+    description: Download the pinned, checksum-verified gitleaks release so the secret scan can run.
+    required: false
+    default: "true"
+  post-comment:
+    description: Post or update the report as a pull request comment (needs pull-requests write and a non-fork PR).
+    required: false
+    default: "true"
+  pr-number:
+    description: Pull request number, required to post a comment.
+    required: false
+    default: ""
+
+outputs:
+  decision:
+    description: pass, needs_human or fail
+    value: ${{ steps.run.outputs.decision }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install review-harness
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        cargo install --locked --path "$ACTION_PATH/crates/harness-cli" --root "$RUNNER_TEMP/rh"
+        echo "$RUNNER_TEMP/rh/bin" >> "$GITHUB_PATH"
+
+    - name: Install gitleaks (pinned and checksum-verified)
+      if: inputs.install-gitleaks == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        VERSION=8.30.1
+        SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        curl --fail --silent --show-error --location --max-time 120 \
+          -o "$RUNNER_TEMP/gitleaks.tgz" \
+          "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
+        echo "${SHA256}  $RUNNER_TEMP/gitleaks.tgz" | sha256sum --check --strict
+        mkdir -p "$RUNNER_TEMP/gl"
+        tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP/gl" gitleaks
+        echo "$RUNNER_TEMP/gl" >> "$GITHUB_PATH"
+
+    - name: Install cargo-audit
+      shell: bash
+      run: |
+        set -euo pipefail
+        command -v cargo-audit >/dev/null 2>&1 || cargo install --locked cargo-audit --root "$RUNNER_TEMP/audit"
+        echo "$RUNNER_TEMP/audit/bin" >> "$GITHUB_PATH"
+
+    - name: Run review-harness
+      id: run
+      shell: bash
+      env:
+        BASE_SHA: ${{ inputs.base-sha }}
+        HEAD_SHA: ${{ inputs.head-sha }}
+        CONFIG_REF: ${{ inputs.config-ref }}
+        FAIL_ON_NEEDS_HUMAN: ${{ inputs.fail-on-needs-human }}
+        POST_COMMENT: ${{ inputs.post-comment }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -uo pipefail
+        out="$RUNNER_TEMP/review-harness"
+        mkdir -p "$out"
+        # Trusted config: from the base commit, never from the PR branch.
+        ref="${CONFIG_REF:-$BASE_SHA}"
+        if git cat-file -e "${ref}:.review-harness.toml" 2>/dev/null; then
+          git show "${ref}:.review-harness.toml" > "$out/config.toml"
+        else
+          : > "$out/config.toml"
+        fi
+        review-harness run \
+          --base "$BASE_SHA" --head "$HEAD_SHA" \
+          --config "$out/config.toml" \
+          --state-file "$out/state.json" \
+          --record-dir "$out/records" \
+          --comment-file "$out/comment.md" \
+          > "$out/stdout.md"
+        code=$?
+        case "$code" in
+          0) decision=pass ;;
+          1) decision=fail ;;
+          3) decision=needs_human ;;
+          *) decision=error ;;
+        esac
+        echo "decision=$decision" >> "$GITHUB_OUTPUT"
+        echo "out_dir=$out" >> "$GITHUB_OUTPUT"
+        if [ -f "$out/comment.md" ]; then
+          cat "$out/comment.md" >> "$GITHUB_STEP_SUMMARY"
+        fi
+        if [ "$POST_COMMENT" = "true" ] && [ -n "$PR_NUMBER" ] && [ -f "$out/comment.md" ]; then
+          marker='<!-- review-harness:report -->'
+          existing=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
+            --jq "[.[] | select(.body | contains(\"$marker\"))][0].id // empty" 2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            gh api --method PATCH "repos/$REPO/issues/comments/$existing" -F body=@"$out/comment.md" >/dev/null \
+              || echo "::warning::could not update the report comment (read-only token, e.g. a fork PR)"
+          else
+            gh api --method POST "repos/$REPO/issues/$PR_NUMBER/comments" -F body=@"$out/comment.md" >/dev/null \
+              || echo "::warning::could not post the report comment (read-only token, e.g. a fork PR)"
+          fi
+        fi
+        case "$decision" in
+          pass) exit 0 ;;
+          fail) echo "::error::review-harness: FAIL"; exit 1 ;;
+          needs_human)
+            echo "::warning::review-harness: human review required"
+            if [ "$FAIL_ON_NEEDS_HUMAN" = "true" ]; then exit 1; fi
+            exit 0 ;;
+          *) echo "::error::review-harness errored (exit $code)"; exit 1 ;;
+        esac
