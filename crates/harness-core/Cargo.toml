@@ -1,0 +1,13 @@
+[package]
+name = "harness-core"
+description = "Core library for review-harness: layered, risk-based code review."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

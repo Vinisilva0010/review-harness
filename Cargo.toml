@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["crates/harness-core", "crates/harness-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.98.1"
+license = "MIT"
+repository = "https://github.com/Vinisilva0010/review-harness"
+authors = ["Vinicius"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

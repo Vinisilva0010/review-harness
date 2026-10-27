@@ -1,0 +1,18 @@
+[package]
+name = "harness-cli"
+description = "Command-line interface for review-harness."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "review-harness"
+path = "src/main.rs"
+
+[dependencies]
+harness-core = { path = "../harness-core" }
+
+[lints]
+workspace = true
