@@ -7,3 +7,27 @@
 - `verify` exit codes: 0 verified, 1 failed or no evidence, 2 usage/internal error. No evidence is never a pass.
 - Commands run via `sh -c` in their own process group so a timeout kills grandchildren; output is tail-capped (4 KiB) while draining pipes to avoid blocking or unbounded memory.
 - Blocking-only stack (no tokio): `wait-timeout` for process timeouts, `ureq` later for HTTP.
+- Risk: unmatched file types default to Medium (unknown is not safe); precedence high > medium > low; CI files, manifests, binaries, large files and secret-like added lines are extra signals that can only raise risk.
+- Secret-like detection reports pattern name and line number only, never the matched text.
+- Config is untrusted when it comes from a PR head (it can define commands and lower risk). The GitHub Action (phase 5) must read config from the base ref, not the PR branch.
+- `classify --fail-on <level>` exits 1 at or above the level; default exit is 0 since classification is informational.
+- Security: a scanner that is missing, disabled, times out or emits unparseable output is Skipped/Error, and the verdict is Incomplete (CLI exit 3), never Clean. gitleaks always runs with `--redact` and only rule/file/line are kept.
+- External scanner processes run in their own process group and are killed as a group on timeout (otherwise a grandchild holds the pipe open and the timeout is not enforced).
+- gitleaks is invoked with the v8.19+ `git`/`dir` subcommands; gitleaks is not installed in this environment, so it is only exercised through stubs (see BLOCKERS.md).
+- AI review: provider wire formats verified via WebFetch (Gemini generateContent with `x-goog-api-key` header rather than a `?key=` query so keys never land in URLs/logs; Anthropic Messages with `anthropic-version: 2023-06-01`; OpenAI chat-completions as documented by Groq, using `max_completion_tokens` and `response_format: json_object`). OpenAI's own docs returned 403 to the fetcher, so the OpenAI-compatible format is encoded from Groq's documentation.
+- Model output must match `{"findings":[...]}` exactly (unknown fields rejected). There is no verdict field, so a model cannot influence the gate; a reply smuggling a verdict is treated as invalid and fails closed after one retry. A single Markdown code fence is tolerated.
+- Token budget is cumulative per PR (`tokens_spent` in the persisted state) and checked before every call including the JSON retry. Estimate is bytes/3 (conservative); real provider usage replaces it once reported.
+- A failed or refused review does not consume a round but its tokens are counted. Round 3 with remaining findings emits the "step back and rethink the approach" notice; a 4th request makes no LLM call.
+- The `review` CLI falls back to the full diff if the last reviewed commit is unreachable (force-push).
+- Transport refuses non-https URLs except localhost; redirects are disabled; response bodies capped at 2 MiB; the API key is redacted from every error string.
+- Gate: fail = deterministic negative (failed checks, scanner findings); needs-human = nothing proven or a human must adjudicate (no evidence, incomplete scan, any AI concern, AI failure/over-budget/step-back, any high-risk change); pass requires verified + clean + risk below high. AI-requested changes map to needs-human (not fail) because AI findings are advisory and can be wrong. Exit codes: 0 pass, 1 fail, 3 needs-human, 2 error.
+- The AI layer is skipped (no tokens) when verify or security already failed.
+- Action reads `.review-harness.toml` from the BASE commit so a PR cannot change its own rules or the commands run on its behalf. Note: configured checks (e.g. `cargo test`) still execute PR code, which is inherent to CI; this is why the workflow uses `pull_request` (no secrets for forks) and never `pull_request_target`.
+- The Action only needs `actions/checkout` and `actions/upload-artifact` (both pinned by SHA); the comment is posted with `gh api` and the job token, avoiding a third-party comment action. gitleaks is downloaded at a pinned version with a pinned sha256.
+- `needs-human` exits 0 from the Action by default (`fail-on-needs-human: false`) and raises a warning, because required human review is enforced by branch protection + CODEOWNERS; failing the check would block merges that a reviewer has legitimately approved.
+- The runner's stock Rust toolchain must be at least rust-version 1.98.1; this could not be verified from this environment (see BLOCKERS.md).
+- Flaky-test root cause found and fixed in production code, not the test: spawning a just-written executable can fail with ETXTBSY when another thread forks concurrently, so scanner spawns retry that transient error (up to 20 x 25 ms).
+- Metrics: rounds per PR are grouped by PR number (falls back to head SHA) using the max round seen; hallucination rate = findings dropped by the validator / raw findings; reverts are detected from `git log` (subjects `Revert "..."`, `revert:`/`revert(`, or the "This reverts commit" body line).
+- `learn` sanitises titles into `[a-z0-9_]` slugs, collapses newlines (a rule cannot forge another `## R-NNN` heading), rejects absolute/`..` test dirs, never overwrites an existing test, and scaffolds an `#[ignore]`d stub so CI stays green until a human writes the real reproduction.
+- REVIEW.md is fed to the AI reviewer from the base ref (like the config), capped at 4000 chars, so a PR cannot write its own review rules.
+- Example run records are generated, synthetic, and clearly labelled; a test guards them against schema drift.

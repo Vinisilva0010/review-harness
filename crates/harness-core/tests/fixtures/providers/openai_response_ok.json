@@ -1,0 +1,5 @@
+{
+  "id": "chatcmpl-1", "object": "chat.completion", "model": "test-model",
+  "choices": [{"index": 0, "message": {"role": "assistant", "content": "{\"findings\":[]}"}, "finish_reason": "stop"}],
+  "usage": {"prompt_tokens": 130, "completion_tokens": 7, "total_tokens": 137}
+}

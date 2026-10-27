@@ -8,13 +8,18 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+tempfile = "3.27.0"
+globset = "0.4.20"
+regex = "1.13.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 thiserror = "2.0.21"
+toml = "1.1.8"
 wait-timeout = "0.2.1"
+ureq = "3.5.0"
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-tempfile = "3.27.0"
+proptest = "1.12.0"

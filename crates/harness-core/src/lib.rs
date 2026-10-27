@@ -1,6 +1,16 @@
 //! Core library for review-harness.
 #![forbid(unsafe_code)]
 
+pub mod config;
+pub mod diff;
+pub mod gate;
+pub mod learn;
+pub mod metrics;
+pub mod pipeline;
+pub mod report;
+pub mod review;
+pub mod risk;
+pub mod security;
 pub mod verify;
 
 /// Crate version, exposed for the CLI `--version` output.

@@ -1,0 +1,45 @@
+name: review-harness
+
+# `pull_request` (never `pull_request_target`): fork PRs run without secrets and with a
+# read-only token. Same-repo PRs get the optional LLM key; forks never do.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: review-harness-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Review
+        id: review
+        uses: ./
+        env:
+          # Empty for forks and when the secret is not configured: the AI layer then
+          # reports "skipped".
+          GEMINI_API_KEY: ${{ github.event.pull_request.head.repo.full_name == github.repository && secrets.GEMINI_API_KEY || '' }}
+        with:
+          base-sha: ${{ github.event.pull_request.base.sha }}
+          head-sha: ${{ github.event.pull_request.head.sha }}
+          pr-number: ${{ github.event.pull_request.number }}
+          post-comment: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+      - name: Upload run record
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: review-harness-run
+          path: ${{ runner.temp }}/review-harness/records
+          if-no-files-found: ignore
+          retention-days: 30

@@ -1,0 +1,6 @@
+{
+  "id": "msg_01", "type": "message", "role": "assistant", "model": "test-model",
+  "content": [{"type": "text", "text": "{\"findings\":"}, {"type": "text", "text": "[]}"}],
+  "stop_reason": "end_turn", "stop_sequence": null,
+  "usage": {"input_tokens": 140, "output_tokens": 9}
+}

@@ -144,7 +144,7 @@ fn read_tail<R: Read>(mut reader: R, cap: usize) -> (Vec<u8>, bool) {
     (tail, truncated)
 }
 
-fn kill_group(pid: u32) {
+pub(crate) fn kill_group(pid: u32) {
     // The child leads its own process group, so this also reaps grandchildren.
     let _ = Command::new("kill")
         .args(["-KILL", "--", &format!("-{pid}")])

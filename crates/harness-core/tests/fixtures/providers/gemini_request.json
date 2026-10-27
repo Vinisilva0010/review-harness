@@ -1,0 +1,5 @@
+{
+  "systemInstruction": {"parts": [{"text": "SYS"}]},
+  "contents": [{"role": "user", "parts": [{"text": "USER"}]}],
+  "generationConfig": {"responseMimeType": "application/json", "maxOutputTokens": 512, "temperature": 0}
+}
