@@ -125,7 +125,7 @@ Um processo curto por PR não precisa de async. O `ureq` bloqueante reduz depend
 
 **Como testou sem gastar dinheiro com API?**
 Um `MockProvider`, um transporte HTTP falso e fixtures JSON no formato real de cada provedor. Nenhum
-teste usa rede.
+teste usa a rede externa (só um servidor local de teste).
 
 **O que ficou de fora ou é limitação?**
 O gitleaks e o workflow do GitHub só foram validados por stubs e execução local (veja `BLOCKERS.md`);

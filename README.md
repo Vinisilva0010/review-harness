@@ -176,7 +176,7 @@ cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo te
 cargo audit
 ```
 
-No test touches the network or a real LLM: providers are tested with `MockProvider`, a fake HTTP
+No test reaches the external network or a real LLM (a few provider-transport tests talk to a throwaway loopback server on 127.0.0.1): providers are tested with `MockProvider`, a fake HTTP
 transport and recorded JSON fixtures (`crates/harness-core/tests/fixtures/`).
 
 More: [ARCHITECTURE.md](ARCHITECTURE.md), [SECURITY.md](SECURITY.md), [DECISIONS.md](DECISIONS.md),
