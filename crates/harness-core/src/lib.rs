@@ -3,6 +3,7 @@
 
 pub mod config;
 pub mod diff;
+pub mod risk;
 pub mod verify;
 
 /// Crate version, exposed for the CLI `--version` output.
