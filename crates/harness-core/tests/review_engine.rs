@@ -26,6 +26,7 @@ fn input<'a>(diff: &'a Diff, risk: RiskLevel, state: ReviewState) -> ReviewInput
         incremental: None,
         risk,
         head_commit: Some("abc123".into()),
+        project_rules: None,
         state,
     }
 }
@@ -114,6 +115,18 @@ fn only_low_severity_does_not_request_changes() {
     let r = engine(&m, cfg()).review(input(&d, RiskLevel::Medium, ReviewState::default()));
     assert_eq!(r.findings.len(), 1);
     assert!(!r.requests_changes);
+}
+
+#[test]
+fn project_rules_reach_the_prompt() {
+    let d = Diff::parse(DIFF);
+    let m = MockProvider::with_texts(&[&reply(&[])]);
+    let mut i = input(&d, RiskLevel::Medium, ReviewState::default());
+    i.project_rules = Some("R-001: always validate input length");
+    engine(&m, cfg()).review(i);
+    assert!(m.requests()[0]
+        .user
+        .contains("R-001: always validate input length"));
 }
 
 #[test]
@@ -274,6 +287,7 @@ fn second_round_reviews_only_lines_changed_since_last_commit() {
         incremental: Some(&inc),
         risk: RiskLevel::High,
         head_commit: Some("new".into()),
+        project_rules: None,
         state,
     });
     assert_eq!(r.round, 2);
@@ -301,6 +315,7 @@ fn third_round_with_findings_says_step_back_and_fourth_makes_no_call() {
         incremental: Some(&inc),
         risk: RiskLevel::High,
         head_commit: None,
+        project_rules: None,
         state,
     });
     assert_eq!(r.round, 3);

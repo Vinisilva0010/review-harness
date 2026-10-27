@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "generated_at_unix": 1790002000,
+  "pr": 103,
+  "base": "0000000000000000000000000000000000000001",
+  "head": "0000000000000000000000000000000000000067",
+  "risk": {
+    "overall": "medium",
+    "total_changed_lines": 3,
+    "reasons": [],
+    "files": [
+      {
+        "path": "src/lib.rs",
+        "level": "medium",
+        "reasons": [
+          {
+            "signal": "path_rule",
+            "level": "medium",
+            "detail": "matches a medium-risk path rule"
+          }
+        ]
+      }
+    ]
+  },
+  "verify": {
+    "results": [
+      {
+        "name": "test",
+        "command": "true",
+        "outcome": "passed",
+        "exit_code": 0,
+        "duration_ms": 1,
+        "stdout_tail": "",
+        "stderr_tail": "",
+        "output_truncated": false
+      }
+    ]
+  },
+  "security": {
+    "results": [
+      {
+        "scanner": "cargo-audit",
+        "status": "skipped",
+        "detail": "disabled in config",
+        "findings": []
+      },
+      {
+        "scanner": "gitleaks",
+        "status": "skipped",
+        "detail": "disabled in config",
+        "findings": []
+      }
+    ]
+  },
+  "review": {
+    "status": {
+      "kind": "completed"
+    },
+    "round": 1,
+    "findings": [
+      {
+        "file": "src/lib.rs",
+        "line": 2,
+        "severity": "high",
+        "category": "bug",
+        "explanation": "Scripted example finding on line 2.",
+        "suggested_fix": null
+      }
+    ],
+    "requests_changes": true,
+    "notices": [],
+    "metrics": {
+      "findings_raw": 3,
+      "findings_kept": 1,
+      "hallucinated": 2,
+      "duplicates": 0,
+      "by_severity": {
+        "high": 1
+      },
+      "input_tokens": 1800,
+      "output_tokens": 240,
+      "llm_calls": 1,
+      "invalid_json_retries": 0
+    },
+    "state": {
+      "rounds_done": 1,
+      "last_reviewed_commit": "0000000000000000000000000000000000000067",
+      "tokens_spent": 2040
+    }
+  },
+  "gate": {
+    "decision": "needs_human",
+    "reasons": [
+      "security scan incomplete (scanner skipped or failed)",
+      "AI review requests changes"
+    ]
+  }
+}

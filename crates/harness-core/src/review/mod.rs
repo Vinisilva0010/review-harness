@@ -225,6 +225,8 @@ pub struct ReviewInput<'a> {
     pub incremental: Option<&'a Diff>,
     pub risk: RiskLevel,
     pub head_commit: Option<String>,
+    /// Maintainer rules (REVIEW.md from the base branch), if any.
+    pub project_rules: Option<&'a str>,
     pub state: ReviewState,
 }
 
@@ -301,7 +303,10 @@ impl ReviewEngine {
         }
 
         let system = prompt::system_prompt();
-        let user = prompt::user_prompt(&prompt::render_diff(scope_diff, &allowed));
+        let user = prompt::user_prompt(
+            &prompt::render_diff(scope_diff, &allowed),
+            input.project_rules,
+        );
         let budget = self.cfg.token_budget;
         let estimate = prompt::estimate_tokens(&system) + prompt::estimate_tokens(&user);
         if input.state.tokens_spent.saturating_add(estimate) > budget {

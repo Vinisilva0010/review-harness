@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "generated_at_unix": 1790003000,
+  "pr": 103,
+  "base": "0000000000000000000000000000000000000001",
+  "head": "0000000000000000000000000000000000000067",
+  "risk": {
+    "overall": "medium",
+    "total_changed_lines": 3,
+    "reasons": [],
+    "files": [
+      {
+        "path": "src/lib.rs",
+        "level": "medium",
+        "reasons": [
+          {
+            "signal": "path_rule",
+            "level": "medium",
+            "detail": "matches a medium-risk path rule"
+          }
+        ]
+      }
+    ]
+  },
+  "verify": {
+    "results": [
+      {
+        "name": "test",
+        "command": "true",
+        "outcome": "passed",
+        "exit_code": 0,
+        "duration_ms": 2,
+        "stdout_tail": "",
+        "stderr_tail": "",
+        "output_truncated": false
+      }
+    ]
+  },
+  "security": {
+    "results": [
+      {
+        "scanner": "cargo-audit",
+        "status": "skipped",
+        "detail": "disabled in config",
+        "findings": []
+      },
+      {
+        "scanner": "gitleaks",
+        "status": "skipped",
+        "detail": "disabled in config",
+        "findings": []
+      }
+    ]
+  },
+  "review": {
+    "status": {
+      "kind": "completed"
+    },
+    "round": 2,
+    "findings": [],
+    "requests_changes": false,
+    "notices": [],
+    "metrics": {
+      "findings_raw": 0,
+      "findings_kept": 0,
+      "hallucinated": 0,
+      "duplicates": 0,
+      "by_severity": {},
+      "input_tokens": 900,
+      "output_tokens": 10,
+      "llm_calls": 1,
+      "invalid_json_retries": 0
+    },
+    "state": {
+      "rounds_done": 2,
+      "last_reviewed_commit": "0000000000000000000000000000000000000067",
+      "tokens_spent": 2950
+    }
+  },
+  "gate": {
+    "decision": "needs_human",
+    "reasons": [
+      "security scan incomplete (scanner skipped or failed)"
+    ]
+  }
+}
