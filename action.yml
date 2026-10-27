@@ -94,14 +94,14 @@ runs:
         else
           : > "$out/config.toml"
         fi
+        code=0
         review-harness run \
           --base "$BASE_SHA" --head "$HEAD_SHA" \
           --config "$out/config.toml" \
           --state-file "$out/state.json" \
           --record-dir "$out/records" \
           --comment-file "$out/comment.md" \
-          > "$out/stdout.md"
-        code=$?
+          > "$out/stdout.md" || code=$?
         case "$code" in
           0) decision=pass ;;
           1) decision=fail ;;
