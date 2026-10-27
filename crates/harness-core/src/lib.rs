@@ -1,6 +1,8 @@
 //! Core library for review-harness.
 #![forbid(unsafe_code)]
 
+pub mod verify;
+
 /// Crate version, exposed for the CLI `--version` output.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
