@@ -109,6 +109,24 @@ impl Default for VerifyConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct SecurityConfig {
+    pub cargo_audit: bool,
+    pub gitleaks: bool,
+    pub timeout_secs: u64,
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            cargo_audit: true,
+            gitleaks: true,
+            timeout_secs: 300,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
@@ -155,6 +173,7 @@ impl Default for ReviewConfig {
 pub struct Config {
     pub risk: RiskConfig,
     pub verify: VerifyConfig,
+    pub security: SecurityConfig,
     pub review: ReviewConfig,
 }
 
@@ -201,6 +220,9 @@ impl Config {
             if c.name.trim().is_empty() || c.command.trim().is_empty() {
                 return bad("verify.checks entries need a non-empty name and command".into());
             }
+        }
+        if self.security.timeout_secs == 0 {
+            return bad("security.timeout_secs must be greater than zero".into());
         }
         let r = &self.review;
         if r.token_budget == 0 {
@@ -259,6 +281,12 @@ timeout_secs = 600
 # Example: checks = [{ name = "test", command = "cargo test --all" }]
 checks = []
 
+[security]
+# Scanners that are not installed are reported as "skipped", never as passed.
+cargo_audit = true
+gitleaks = true
+timeout_secs = 300
+
 [review]
 # One of: "none" (default, AI layer skipped), "gemini", "openai_compatible", "anthropic".
 provider = "none"
@@ -301,6 +329,13 @@ mod tests {
     fn bad_glob_is_rejected() {
         let e = Config::parse("[risk]\nhigh = [\"[unclosed\"]").unwrap_err();
         assert!(e.to_string().contains("bad glob"));
+    }
+
+    #[test]
+    fn security_section_parses() {
+        let c = Config::parse("[security]\ngitleaks = false\n").unwrap();
+        assert!(!c.security.gitleaks && c.security.cargo_audit);
+        assert!(Config::parse("[security]\ntimeout_secs = 0").is_err());
     }
 
     #[test]

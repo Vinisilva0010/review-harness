@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+tempfile = "3.27.0"
 globset = "0.4.20"
 regex = "1.13.1"
 serde = { version = "1.0.229", features = ["derive"] }
@@ -21,4 +22,3 @@ workspace = true
 
 [dev-dependencies]
 proptest = "1.12.0"
-tempfile = "3.27.0"

@@ -11,6 +11,7 @@ use clap::{Args, Parser, Subcommand};
 use harness_core::config::{Config, RiskLevel, CONFIG_FILE, DEFAULT_CONFIG_TOML};
 use harness_core::diff::{self, Diff, MAX_DIFF_BYTES};
 use harness_core::risk::Classifier;
+use harness_core::security::{self, SecurityVerdict, Tools};
 use harness_core::verify::{self, Check, Limits, Verdict};
 
 #[derive(Parser)]
@@ -49,6 +50,20 @@ enum Command {
         /// Exit with code 1 if overall risk is at least this level.
         #[arg(long, value_enum)]
         fail_on: Option<Level>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run deterministic security scanners (cargo-audit, gitleaks).
+    ///
+    /// Exit codes: 0 clean, 1 findings, 3 incomplete (a scanner was skipped or failed).
+    Security {
+        #[command(flatten)]
+        common: Common,
+        /// Base ref; gitleaks scans `base..head` instead of the working tree.
+        #[arg(long)]
+        base: Option<String>,
+        #[arg(long, default_value = "HEAD")]
+        head: String,
         #[arg(long)]
         json: bool,
     },
@@ -207,6 +222,31 @@ fn run() -> Result<ExitCode> {
             Ok(match fail_on {
                 Some(l) if report.overall >= l.into() => ExitCode::from(1),
                 _ => ExitCode::SUCCESS,
+            })
+        }
+        Command::Security {
+            common,
+            base,
+            head,
+            json,
+        } => {
+            let config = common.load_config()?;
+            let range = base.map(|b| format!("{b}..{head}"));
+            let report = security::run_all(
+                &config.security,
+                &Tools::default(),
+                &common.dir,
+                range.as_deref(),
+            );
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("{}", report.to_markdown());
+            }
+            Ok(match report.verdict() {
+                SecurityVerdict::Clean => ExitCode::SUCCESS,
+                SecurityVerdict::Findings => ExitCode::from(1),
+                SecurityVerdict::Incomplete => ExitCode::from(3),
             })
         }
         Command::Init { common, force } => {
