@@ -4,6 +4,8 @@
 pub mod config;
 pub mod diff;
 pub mod gate;
+pub mod learn;
+pub mod metrics;
 pub mod pipeline;
 pub mod report;
 pub mod review;

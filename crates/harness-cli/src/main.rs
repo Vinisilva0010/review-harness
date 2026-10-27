@@ -10,6 +10,8 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 use harness_core::config::{Config, RiskLevel, CONFIG_FILE, DEFAULT_CONFIG_TOML};
 use harness_core::diff::{self, Diff, MAX_DIFF_BYTES};
+use harness_core::learn::{self, LearnRequest};
+use harness_core::metrics;
 use harness_core::pipeline::{self, PipelineInput};
 use harness_core::review::{self, ReviewEngine, ReviewInput, ReviewState, ReviewStatus};
 use harness_core::risk::Classifier;
@@ -86,6 +88,9 @@ enum Command {
         /// Also write the Markdown PR comment to this file.
         #[arg(long)]
         comment_file: Option<PathBuf>,
+        /// Pull request number recorded in the run record (groups rounds per PR).
+        #[arg(long)]
+        pr_number: Option<u64>,
         /// Print the JSON run record instead of Markdown.
         #[arg(long)]
         json: bool,
@@ -103,6 +108,36 @@ enum Command {
         state_file: Option<PathBuf>,
         #[arg(long)]
         json: bool,
+    },
+    /// Aggregate run records (rounds, findings, hallucination rate, tokens, reverts).
+    Metrics {
+        #[command(flatten)]
+        common: Common,
+        /// Directory of JSON run records written by `run --record-dir`.
+        #[arg(long)]
+        records: PathBuf,
+        /// Also scan this many recent commits of the repository for reverts.
+        #[arg(long)]
+        git_limit: Option<usize>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record a rule in REVIEW.md and scaffold a regression test for a bug that escaped review.
+    Learn {
+        #[command(flatten)]
+        common: Common,
+        /// Short title of the escaped bug.
+        #[arg(long)]
+        title: String,
+        /// What escaped review (the symptom).
+        #[arg(long)]
+        summary: String,
+        /// The rule reviewers should apply from now on.
+        #[arg(long)]
+        rule: String,
+        /// Directory (relative to the repo) for the regression test stub.
+        #[arg(long, default_value = "tests/regression")]
+        test_dir: PathBuf,
     },
     /// Write a commented default `.review-harness.toml`.
     Init {
@@ -244,6 +279,21 @@ fn review_context(
     })
 }
 
+/// REVIEW.md from the base ref (trusted), falling back to nothing. A PR cannot
+/// inject rules into its own review.
+fn project_rules(dir: &Path, base: Option<&str>) -> Option<String> {
+    let base = base.filter(|b| !b.starts_with('-'))?;
+    let out = std::process::Command::new("git")
+        .args(["show", &format!("{base}:REVIEW.md")])
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+        .filter(|t| !t.trim().is_empty())
+}
+
 fn git_rev_parse(dir: &Path, rev: &str) -> Result<String> {
     if rev.starts_with('-') {
         bail!("invalid ref {rev:?}");
@@ -357,6 +407,7 @@ fn run() -> Result<ExitCode> {
             let config = common.load_config()?;
             let ctx = review_context(&common, &source, state_file.as_deref())?;
             let risk = Classifier::new(&config.risk)?.classify(&ctx.diff).overall;
+            let rules = project_rules(&common.dir, source.base.as_deref());
             let slot = review::build_default_provider(&config.review, &|k| std::env::var(k).ok())
                 .map_err(|e| anyhow::anyhow!("provider setup: {e}"))?;
             let report = ReviewEngine::new(config.review.clone(), slot).review(ReviewInput {
@@ -364,6 +415,7 @@ fn run() -> Result<ExitCode> {
                 incremental: ctx.incremental.as_ref(),
                 risk,
                 head_commit: ctx.head_commit,
+                project_rules: rules.as_deref(),
                 state: ctx.state,
             });
             if let Some(p) = &state_file {
@@ -387,10 +439,12 @@ fn run() -> Result<ExitCode> {
             state_file,
             record_dir,
             comment_file,
+            pr_number,
             json,
         } => {
             let config = common.load_config()?;
             let ctx = review_context(&common, &source, state_file.as_deref())?;
+            let rules = project_rules(&common.dir, source.base.as_deref());
             let provider =
                 review::build_default_provider(&config.review, &|k| std::env::var(k).ok())
                     .map_err(|e| anyhow::anyhow!("provider setup: {e}"))?;
@@ -401,6 +455,8 @@ fn run() -> Result<ExitCode> {
                 incremental: ctx.incremental.as_ref(),
                 base: source.base.clone(),
                 head: ctx.head_commit.clone(),
+                pr: pr_number,
+                project_rules: rules.as_deref(),
                 state: ctx.state,
                 provider,
                 tools: Tools::default(),
@@ -430,6 +486,59 @@ fn run() -> Result<ExitCode> {
                 println!("{}", record.to_markdown());
             }
             Ok(ExitCode::from(record.gate.decision.exit_code()))
+        }
+        Command::Metrics {
+            common,
+            records,
+            git_limit,
+            json,
+        } => {
+            let (recs, warnings) = metrics::load_records(&records)
+                .with_context(|| format!("reading {}", records.display()))?;
+            for w in &warnings {
+                eprintln!("warning: {w}");
+            }
+            let m = metrics::aggregate(&recs);
+            let reverts = git_limit
+                .map(|n| metrics::detect_reverts(&common.dir, n))
+                .transpose()
+                .map_err(|e| anyhow::anyhow!(e))?;
+            if json {
+                let v = serde_json::json!({ "metrics": m, "reverts": reverts });
+                println!("{}", serde_json::to_string_pretty(&v)?);
+            } else {
+                println!("{}", m.to_markdown(reverts.as_ref()));
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Learn {
+            common,
+            title,
+            summary,
+            rule,
+            test_dir,
+        } => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            let date = learn::date_from_unix(now);
+            let learned = learn::learn(
+                &common.dir,
+                &test_dir,
+                &LearnRequest {
+                    title: &title,
+                    summary: &summary,
+                    rule: &rule,
+                    date: &date,
+                },
+            )?;
+            println!(
+                "added {} to {} and created {}",
+                learned.rule_id,
+                learn::REVIEW_FILE,
+                learned.test_path.display()
+            );
+            Ok(ExitCode::SUCCESS)
         }
         Command::Init { common, force } => {
             let path = common

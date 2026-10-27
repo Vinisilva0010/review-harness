@@ -18,6 +18,9 @@ pub const SCHEMA_VERSION: u32 = 1;
 pub struct RunRecord {
     pub schema_version: u32,
     pub generated_at_unix: u64,
+    /// Pull request number, when known (groups rounds per PR for metrics).
+    #[serde(default)]
+    pub pr: Option<u64>,
     pub base: Option<String>,
     pub head: Option<String>,
     pub risk: RiskReport,
@@ -103,6 +106,7 @@ mod tests {
         RunRecord {
             schema_version: SCHEMA_VERSION,
             generated_at_unix: 1,
+            pr: None,
             base: Some("main".into()),
             head: Some("abc".into()),
             risk: RiskReport {

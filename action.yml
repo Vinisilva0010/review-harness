@@ -100,6 +100,7 @@ runs:
           --state-file "$out/state.json" \
           --record-dir "$out/records" \
           --comment-file "$out/comment.md" \
+          ${PR_NUMBER:+--pr-number "$PR_NUMBER"} \
           > "$out/stdout.md"
         code=$?
         case "$code" in

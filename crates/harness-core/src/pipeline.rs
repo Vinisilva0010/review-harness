@@ -22,6 +22,8 @@ pub struct PipelineInput<'a> {
     pub incremental: Option<&'a Diff>,
     pub base: Option<String>,
     pub head: Option<String>,
+    pub pr: Option<u64>,
+    pub project_rules: Option<&'a str>,
     pub state: ReviewState,
     pub provider: ProviderSlot,
     pub tools: Tools,
@@ -61,6 +63,7 @@ pub fn run(input: PipelineInput<'_>) -> Result<RunRecord, String> {
             incremental: input.incremental,
             risk: risk.overall,
             head_commit: input.head.clone(),
+            project_rules: input.project_rules,
             state: input.state,
         })
     };
@@ -76,6 +79,7 @@ pub fn run(input: PipelineInput<'_>) -> Result<RunRecord, String> {
         generated_at_unix: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_secs()),
+        pr: input.pr,
         base: input.base,
         head: input.head,
         risk,
@@ -123,6 +127,8 @@ mod tests {
             incremental: None,
             base: None,
             head: None,
+            pr: None,
+            project_rules: None,
             state: ReviewState::default(),
             provider,
             tools: no_tools(),
@@ -191,6 +197,8 @@ mod tests {
             incremental: None,
             base: None,
             head: None,
+            pr: None,
+            project_rules: None,
             state: ReviewState::default(),
             provider: ProviderSlot::NotConfigured,
             tools: no_tools(),
