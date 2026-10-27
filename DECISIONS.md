@@ -27,3 +27,7 @@
 - `needs-human` exits 0 from the Action by default (`fail-on-needs-human: false`) and raises a warning, because required human review is enforced by branch protection + CODEOWNERS; failing the check would block merges that a reviewer has legitimately approved.
 - The runner's stock Rust toolchain must be at least rust-version 1.98.1; this could not be verified from this environment (see BLOCKERS.md).
 - Flaky-test root cause found and fixed in production code, not the test: spawning a just-written executable can fail with ETXTBSY when another thread forks concurrently, so scanner spawns retry that transient error (up to 20 x 25 ms).
+- Metrics: rounds per PR are grouped by PR number (falls back to head SHA) using the max round seen; hallucination rate = findings dropped by the validator / raw findings; reverts are detected from `git log` (subjects `Revert "..."`, `revert:`/`revert(`, or the "This reverts commit" body line).
+- `learn` sanitises titles into `[a-z0-9_]` slugs, collapses newlines (a rule cannot forge another `## R-NNN` heading), rejects absolute/`..` test dirs, never overwrites an existing test, and scaffolds an `#[ignore]`d stub so CI stays green until a human writes the real reproduction.
+- REVIEW.md is fed to the AI reviewer from the base ref (like the config), capped at 4000 chars, so a PR cannot write its own review rules.
+- Example run records are generated, synthetic, and clearly labelled; a test guards them against schema drift.
